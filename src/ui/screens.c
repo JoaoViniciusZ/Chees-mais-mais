@@ -1,5 +1,6 @@
 #include "screens.h"
 #include "theme.h"
+#include "../campo/movimento.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -174,6 +175,7 @@ static int demo_ultima_peca = -1;
 static bool demo_arrastando = false;
 static int demo_linha_origem = -1;
 static int demo_coluna_origem = -1;
+static bool demo_aliada_ja_moveu = false;
 
 static void inicializar_demo_tabuleiro(int peca_selecionada) {
     for (int linha = 0; linha < 5; ++linha) {
@@ -183,9 +185,10 @@ static void inicializar_demo_tabuleiro(int peca_selecionada) {
     }
 
     demo_tabuleiro[4][2] = peca_selecionada;
-    demo_tabuleiro[0][1] = UI_ROOK;
-    demo_tabuleiro[0][3] = UI_KNIGHT;
-    demo_tabuleiro[1][2] = UI_PAWN;
+    demo_tabuleiro[0][1] = -(UI_ROOK + 2);
+    demo_tabuleiro[0][3] = -(UI_KNIGHT + 2);
+    demo_tabuleiro[1][2] = -(UI_PAWN + 2);
+    demo_aliada_ja_moveu = false;
     demo_tabuleiro_inicializado = true;
     demo_ultima_peca = peca_selecionada;
 }
@@ -195,7 +198,25 @@ static int peca_demo_na_casa(int linha, int coluna, int peca_selecionada) {
         inicializar_demo_tabuleiro(peca_selecionada);
     }
     if (linha < 0 || linha >= 5 || coluna < 0 || coluna >= 5) return -1;
-    return demo_tabuleiro[linha][coluna];
+    int ocupante = demo_tabuleiro[linha][coluna];
+    if (ocupante == -1) return -1;
+    return ocupante >= 0 ? ocupante : -ocupante - 2;
+}
+
+static bool caminho_livre_demo(int linha_origem, int coluna_origem,
+                              int linha_destino, int coluna_destino,
+                              int peca_selecionada) {
+    int passo_linha = (linha_destino > linha_origem) - (linha_destino < linha_origem);
+    int passo_coluna = (coluna_destino > coluna_origem) - (coluna_destino < coluna_origem);
+    int linha = linha_origem + passo_linha;
+    int coluna = coluna_origem + passo_coluna;
+
+    while (linha != linha_destino || coluna != coluna_destino) {
+        if (peca_demo_na_casa(linha, coluna, peca_selecionada) >= 0) return false;
+        linha += passo_linha;
+        coluna += passo_coluna;
+    }
+    return true;
 }
 
 static bool movimento_valido_demo(int tipo, int linha_origem, int coluna_origem,
@@ -204,60 +225,45 @@ static bool movimento_valido_demo(int tipo, int linha_origem, int coluna_origem,
     if (linha_destino < 0 || linha_destino >= 5 || coluna_destino < 0 || coluna_destino >= 5) return false;
     if (linha_origem == linha_destino && coluna_origem == coluna_destino) return false;
 
-    int ocupante = peca_demo_na_casa(linha_destino, coluna_destino, peca_selecionada);
-    if (ocupante == tipo) return false;
+    int destino = demo_tabuleiro[linha_destino][coluna_destino];
+    if (destino >= 0) return false;
+    bool destino_ocupado = destino != -1;
+    int ja_moveu = demo_aliada_ja_moveu || linha_origem != 4;
+    bool movimento_geometrico = false;
 
     switch (tipo) {
-        case UI_PAWN: {
-            int direcao = -1;
-            int deslocamento_linha = linha_destino - linha_origem;
-            int deslocamento_coluna = abs(coluna_destino - coluna_origem);
-
-            if (deslocamento_coluna == 0) {
-                if (deslocamento_linha == direcao && ocupante < 0) return true;
-                if (linha_origem == 4 && deslocamento_linha == -2 && ocupante < 0 &&
-                    peca_demo_na_casa(linha_origem + direcao, coluna_origem, peca_selecionada) < 0) {
-                    return true;
-                }
-                return false;
-            }
-
-            if (deslocamento_coluna == 1 && deslocamento_linha == direcao && ocupante >= 0) return true;
-            return false;
-        }
-        case UI_ROOK: {
-            if ((linha_origem != linha_destino && coluna_origem != coluna_destino) ||
-                (linha_origem == linha_destino && coluna_origem == coluna_destino)) {
-                return false;
-            }
-
-            int passo_linha = (linha_destino > linha_origem) - (linha_destino < linha_origem);
-            int passo_coluna = (coluna_destino > coluna_origem) - (coluna_destino < coluna_origem);
-            int linha = linha_origem + passo_linha;
-            int coluna = coluna_origem + passo_coluna;
-            while (linha != linha_destino || coluna != coluna_destino) {
-                if (peca_demo_na_casa(linha, coluna, peca_selecionada) >= 0) return false;
-                linha += passo_linha;
-                coluna += passo_coluna;
-            }
-            return true;
-        }
-        case UI_BISHOP: {
-            if (abs(linha_destino - linha_origem) != abs(coluna_destino - coluna_origem)) return false;
-            int passo_linha = (linha_destino > linha_origem) ? 1 : -1;
-            int passo_coluna = (coluna_destino > coluna_origem) ? 1 : -1;
-            int linha = linha_origem + passo_linha;
-            int coluna = coluna_origem + passo_coluna;
-            while (linha != linha_destino || coluna != coluna_destino) {
-                if (peca_demo_na_casa(linha, coluna, peca_selecionada) >= 0) return false;
-                linha += passo_linha;
-                coluna += passo_coluna;
-            }
-            return true;
-        }
+        case UI_PAWN:
+            movimento_geometrico = movimentoPeao(linha_origem, coluna_origem,
+                linha_destino, coluna_destino, -1, ja_moveu, destino_ocupado);
+            break;
+        case UI_ROOK:
+            movimento_geometrico = movimentoTorre(linha_origem, coluna_origem,
+                linha_destino, coluna_destino);
+            break;
+        case UI_BISHOP:
+            movimento_geometrico = movimentoBispo(linha_origem, coluna_origem,
+                linha_destino, coluna_destino);
+            break;
+        case UI_KNIGHT:
+            movimento_geometrico = movimentoCavalo(linha_origem, coluna_origem,
+                linha_destino, coluna_destino);
+            break;
+        case UI_KING:
+            movimento_geometrico = movimentoRei(linha_origem, coluna_origem,
+                linha_destino, coluna_destino);
+            break;
+        case UI_QUEEN:
+            movimento_geometrico = movimentoRainha(linha_origem, coluna_origem,
+                linha_destino, coluna_destino);
+            break;
         default:
             return false;
     }
+
+    if (!movimento_geometrico) return false;
+    if (tipo != UI_KNIGHT && !caminho_livre_demo(linha_origem, coluna_origem,
+            linha_destino, coluna_destino, peca_selecionada)) return false;
+    return true;
 }
 
 static void desenhar_movimentos_possiveis(const GameState *state, float bx, float by, float tile) {
@@ -299,7 +305,7 @@ static void draw_game(const GameState *state) {
         if (mouse.x >= bx && mouse.x <= bx + board && mouse.y >= by && mouse.y <= by + board) {
             int coluna = (int)((mouse.x - bx) / tile);
             int linha = (int)((mouse.y - by) / tile);
-            if (peca_demo_na_casa(linha, coluna, state->selected_piece) == state->selected_piece) {
+            if (demo_tabuleiro[linha][coluna] == state->selected_piece) {
                 demo_arrastando = true;
                 demo_linha_origem = linha;
                 demo_coluna_origem = coluna;
@@ -316,6 +322,7 @@ static void draw_game(const GameState *state) {
                                       linha_destino, coluna_destino, state->selected_piece)) {
                 demo_tabuleiro[demo_linha_origem][demo_coluna_origem] = -1;
                 demo_tabuleiro[linha_destino][coluna_destino] = state->selected_piece;
+                demo_aliada_ja_moveu = true;
             }
         }
 
@@ -332,12 +339,10 @@ static void draw_game(const GameState *state) {
         Rectangle sq=rect(bx+col*tile,by+row*tile,tile,tile);
         Color base=((row+col)%2==0)?(Color){235,234,231,255}:(Color){45,45,49,255};
         DrawRectangleRec(sq,base);
-        int peca = peca_demo_na_casa(row, col, state->selected_piece);
-        if (peca >= 0) {
-            bool aliada = true;
-            if (peca == UI_ROOK || peca == UI_KNIGHT || peca == UI_PAWN) {
-                aliada = false;
-            }
+        int ocupante = demo_tabuleiro[row][col];
+        if (ocupante != -1) {
+            int peca = ocupante >= 0 ? ocupante : -ocupante - 2;
+            bool aliada = ocupante >= 0;
             UiDrawPiece(peca, aliada, rect(sq.x+tile*.08f,sq.y+tile*.08f,tile*.84f,tile*.84f),1);
         }
     }
